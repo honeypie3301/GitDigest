@@ -363,6 +363,7 @@ export async function checkServerTokenStatus(): Promise<TokenStatus> {
  */
 export async function performIngest(request: IngestRequest, signal?: AbortSignal): Promise<IngestResponse> {
   let workerStarted = false;
+  let serverError: string | undefined;
   let backendResponded = false;
   const savedToken = getSavedToken();
   const autoInject = getAutoInjectToken();
@@ -420,6 +421,8 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
                 });
               } else if (parsed.type === 'result' && parsed.data) {
                 finalResult = parsed.data;
+              } else if (parsed.type === 'error' && typeof parsed.error === 'string') {
+                serverError = parsed.error;
               }
             } catch {}
           }
@@ -437,6 +440,7 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
         if (finalResult && 'tree' in finalResult && typeof finalResult.tree === 'string') {
           return finalResult;
         }
+        if (serverError) throw new Error(serverError);
       }
 
       const data = await readApiResponse<IngestResponse | WorkerJob>(response, 'Unable to ingest repository');
@@ -472,7 +476,7 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
 
     console.warn('Backend API returned non-200. Falling back to client-side GitHub REST API...');
   } catch (err: any) {
-    if (workerStarted) throw err;
+    if (workerStarted || serverError || (typeof window !== 'undefined' && window.gitDigestDesktop)) throw err;
     if (signal?.aborted || err.name === 'AbortError') {
       throw err;
     }

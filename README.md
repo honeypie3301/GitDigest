@@ -13,6 +13,14 @@ A high-performance codebase ingestion tool designed to convert any Git repositor
 - **Multi-Workflow Sessions**: Work with up to 10 concurrent repository ingestion tabs in a dark neo-brutalist interface.
 - **Multiple Export Formats**: Copy or download formatted code dumps, ASCII file trees, and token count estimations calculated for LLM context windows.
 
+## Windows Desktop App
+
+Open `GitDigest-Windows-x64.exe` to launch GitDigest. The portable executable bundles its runtime and Git. Paste a GitHub URL or use **Choose folder** or **Choose file**, then click **Ingest**. Local inputs are processed on your PC. For private repos, provide a GitHub token with access to the repo.
+
+The desktop app has no per-minute ingestion cap. If GitHub's REST API quota is exhausted, ingestion falls back to a shallow Git clone. GitHub can still restrict access to its own services.
+
+To build the executable on Windows, run `npm ci` followed by `npm run build:desktop`. The executable is written to `build/desktop/GitDigest-Windows-x64.exe`.
+
 ## Running Locally
 
 ### Prerequisites

@@ -8,13 +8,15 @@ import dotenv from 'dotenv';
 import JSZip from 'jszip';
 import { handleWorkerJob, submitWorkerJob } from './lib/worker-proxy.ts';
 import { decompileJavaClass } from './src/services/decompiler/javaClassDecompiler.ts';
-import { createServer as createViteServer } from 'vite';
 
-dotenv.config();
+const desktopKey = process.env.GITDIGEST_DESKTOP_KEY;
+const desktopGit = desktopKey ? process.env.GITDIGEST_DESKTOP_GIT : undefined;
+if (!desktopKey) dotenv.config();
+const workerEnabled = !desktopKey && !!process.env.INGEST_WORKER_URL;
 
 const rawExecFileAsync = promisify(execFile);
 const execFileAsync = async (file: string, args: string[], options: any = {}): Promise<{ stdout: string; stderr: string }> => {
-  const result: any = await rawExecFileAsync(file, args, {
+  const result: any = await rawExecFileAsync(file === 'git' && desktopGit ? desktopGit : file, args, {
     windowsHide: true,
     encoding: 'utf8',
     ...options,
@@ -31,8 +33,16 @@ const execFileAsync = async (file: string, args: string[], options: any = {}): P
 };
 const fsPromises = fs.promises;
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = desktopKey ? 39427 : process.env.PORT || 3000;
 
+if (desktopKey) {
+  app.use((req, res, next) => {
+    if (req.headers.host !== `127.0.0.1:${PORT}` || req.headers['x-gitdigest-desktop'] !== desktopKey) {
+      return res.sendStatus(403);
+    }
+    return next();
+  });
+}
 app.use(express.json({ limit: '50mb' }));
 
 function sanitizeSubpath(subpath: string): string {
@@ -295,22 +305,27 @@ app.get('/api/user-status', async (req, res) => {
 });
 
 // High-speed Ingest Endpoint
-app.all('/api/ingest/jobs/:id', handleWorkerJob);
+if (!desktopKey) app.all('/api/ingest/jobs/:id', handleWorkerJob);
 app.post('/api/ingest', async (req, res) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  if (!checkRateLimit(`ingest:${ip}`, 30, 60 * 1000)) {
+  if (!desktopKey && !checkRateLimit(`ingest:${ip}`, 30, 60 * 1000)) {
     return res.status(429).json({ error: 'Rate limit exceeded: max 30 ingestions per minute.' });
   }
 
   const authHeader = req.headers.authorization;
   const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.substring(7).trim() : null;
-  const incomingToken = bearerToken || req.body.token || process.env.GITHUB_TOKEN;
 
   // In public mode, all users can ingest repositories without owner PIN/key
 
 
   const acceptHeader = (req.headers.accept || '').toLowerCase();
-  const isNdjson = !process.env.INGEST_WORKER_URL && !req.headers['x-no-stream'] && (
+  const { input_text, max_file_size = 50, pattern_type = 'exclude', pattern = '', token, decompile_classes = false } = req.body || {};
+  if (!input_text || typeof input_text !== 'string') {
+    return res.status(400).json({ error: 'Please provide a valid repository URL or path' });
+  }
+  if (workerEnabled) return submitWorkerJob(req, res);
+
+  const isNdjson = !req.headers['x-no-stream'] && (
     !acceptHeader ||
     acceptHeader.includes('application/x-ndjson') ||
     acceptHeader.includes('*/*') ||
@@ -352,13 +367,10 @@ app.post('/api/ingest', async (req, res) => {
     }
   };
 
-  const { input_text, max_file_size = 50, pattern_type = 'exclude', pattern = '', token, decompile_classes = false } = req.body;
-
-  if (!input_text || typeof input_text !== 'string') {
-    return res.status(400).json({ error: 'Please provide a valid repository URL or path' });
-  }
-
-  if (process.env.INGEST_WORKER_URL) return submitWorkerJob(req, res);
+  const sendError = (status: number, error: string) => {
+    if (isNdjson) return res.end(JSON.stringify({ type: 'error', status, error }) + '\n');
+    return res.status(status).json({ error });
+  };
 
   const activeToken = (bearerToken || token || process.env.GITHUB_TOKEN || '').trim();
 
@@ -389,7 +401,8 @@ app.post('/api/ingest', async (req, res) => {
   if (fs.existsSync(potentialLocalPath)) {
     try {
       const stats = fs.statSync(potentialLocalPath);
-      if (stats.isDirectory()) {
+      const isDirectory = stats.isDirectory();
+      if (isDirectory || (desktopKey && stats.isFile())) {
         const localRoot = path.resolve(potentialLocalPath);
         const collectedFiles: Array<{ relPath: string; fullPath: string; size: number }> = [];
 
@@ -421,10 +434,18 @@ app.post('/api/ingest', async (req, res) => {
           }
         }
 
-        walkLocalDir(localRoot);
+        if (isDirectory) {
+          walkLocalDir(localRoot);
+        } else {
+          const relPath = path.basename(localRoot);
+          if (stats.size <= maxBytes && isPathAllowed(relPath)) {
+            collectedFiles.push({ relPath, fullPath: localRoot, size: stats.size });
+          }
+        }
 
         const paths = collectedFiles.map((f) => f.relPath);
-        const treeText = buildAsciiTree(path.basename(localRoot), paths);
+        const treeText = isDirectory ? buildAsciiTree(path.basename(localRoot), paths) : paths.join('\n');
+        const localSource = isDirectory ? 'Local Directory' : 'Local File';
 
         const fileContents: string[] = [];
         let totalChars = 0;
@@ -474,7 +495,7 @@ app.post('/api/ingest', async (req, res) => {
 
         const estimatedTokens = formatTokenCount(Math.round(totalChars / 4));
         const summary = [
-          `Local Directory: ${localRoot}`,
+          `${localSource}: ${localRoot}`,
           `Files analyzed: ${fileContents.length}`,
           `Estimated tokens: ${estimatedTokens}`,
           `Total characters: ${totalChars.toLocaleString()}`,
@@ -489,7 +510,7 @@ app.post('/api/ingest', async (req, res) => {
           files_analyzed: fileContents.length,
           estimated_tokens: estimatedTokens,
           total_chars: totalChars,
-          mode_info: 'Local Directory (Offline, 0 Network Calls)',
+          mode_info: `${localSource} (Offline, 0 Network Calls)`,
         };
 
         if (typeof global.gc === 'function') {
@@ -505,6 +526,10 @@ app.post('/api/ingest', async (req, res) => {
     }
   }
 
+  if (desktopKey && path.isAbsolute(potentialLocalPath)) {
+    return sendError(404, 'The local file or folder could not be read.');
+  }
+
   let clean = input_text.trim();
   let isSshUrl = false;
   if (/^git@github\.com:/i.test(clean)) {
@@ -518,11 +543,14 @@ app.post('/api/ingest', async (req, res) => {
 
   const parts = clean.split('/');
   if (parts.length < 2) {
-    return res.status(400).json({ error: 'Invalid URL. Expected format: owner/repo or https://github.com/owner/repo' });
+    return sendError(400, 'Invalid URL. Expected format: owner/repo or https://github.com/owner/repo');
   }
 
   const owner = parts[0];
   const repo = parts[1];
+  if (desktopKey && (!/^[\w.-]+$/.test(owner) || !/^[\w.-]+$/.test(repo))) {
+    return sendError(400, 'Enter a GitHub repository URL or select a local file or folder.');
+  }
   let branch: string | undefined;
   let subpath: string | undefined;
 
@@ -594,6 +622,8 @@ app.post('/api/ingest', async (req, res) => {
       } else {
         resolvedBranch = 'main';
       }
+
+      if (desktopKey && wasRateLimited) throw new Error('GitHub metadata API quota exhausted');
 
       if (resolvedBranch === 'main' && zipMainRes && zipMainRes.ok) {
         zipRes = zipMainRes;
@@ -791,9 +821,7 @@ app.post('/api/ingest', async (req, res) => {
       if (!ghCloneSucceeded) {
         const errMsg = gitErr.stderr || gitErr.message || '';
         if (errMsg.includes('could not read Username') || errMsg.includes('Authentication failed') || errMsg.includes('Repository not found')) {
-          return res.status(403).json({
-            error: `Could not access repository "${owner}/${repo}". If this is a private repository, please ensure your GitHub Personal Access Token is configured with 'repo' scope, or run 'gh auth login' locally.`,
-          });
+          return sendError(403, `Could not access repository "${owner}/${repo}". If this is a private repository, please ensure your GitHub Personal Access Token is configured with 'repo' scope, or run 'gh auth login' locally.`);
         }
 
         // Fallback: if server rejects options, retry standard minimal shallow clone
@@ -995,7 +1023,8 @@ app.post('/api/ingest', async (req, res) => {
   } catch (err: any) {
     if (clientDisconnected) return;
     console.error('Ingestion error:', err);
-    return res.status(500).json({ error: err.message || 'Failed to process repository ingestion' });
+    const message = desktopKey ? 'Git could not download the repository. Check the repository URL, permissions, and your connection.' : err.message;
+    return sendError(500, message || 'Failed to process repository ingestion');
   } finally {
     try {
       if (fs.existsSync(tempDir)) {
@@ -1066,7 +1095,7 @@ async function startServer() {
   // Cleanup any orphaned temp directories from previous crashes/reboots
   try {
     const tmp = os.tmpdir();
-    const files = await fsPromises.readdir(tmp);
+    const files = desktopKey ? [] : await fsPromises.readdir(tmp);
     for (const f of files) {
       if (f.startsWith('gitingest_')) {
         await fsPromises.rm(path.join(tmp, f), { recursive: true, force: true }).catch(() => {});
@@ -1077,24 +1106,29 @@ async function startServer() {
   const distPath = path.join(process.cwd(), 'dist');
   const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
   const isSourceServer = /\.[cm]?tsx?$/i.test(entryPath);
-  const isExplicitDev = process.env.NODE_ENV === 'development' || isSourceServer;
+  const isExplicitDev = !desktopKey && (process.env.NODE_ENV === 'development' || isSourceServer);
   const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
 
   if (!isExplicitDev && hasDist) {
-    app.use(express.static(distPath, { maxAge: '1d' }));
+    app.use(express.static(distPath, { maxAge: desktopKey ? 0 : '1d' }));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   } else {
-    const vite = await createViteServer({
+    if (desktopKey) throw new Error('Desktop frontend is missing.');
+    const { createServer } = await import('vite');
+    const vite = await createServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   }
 
-  app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`GitIngest server running on http://0.0.0.0:${PORT}`);
+  const host = desktopKey ? '127.0.0.1' : '0.0.0.0';
+  app.listen(Number(PORT), host, () => {
+    const desktopProcess = process as typeof process & { parentPort?: { postMessage(message: string): void } };
+    if (desktopKey) desktopProcess.parentPort?.postMessage('ready');
+    console.log(`GitIngest server running on http://${host}:${PORT}`);
   });
 }
 

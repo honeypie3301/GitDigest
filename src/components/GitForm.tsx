@@ -369,7 +369,7 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
                       setUrl(e.target.value);
                       onUrlChange?.(e.target.value);
                     }}
-                    placeholder="https://github.com/owner/repository"
+                    placeholder={window.gitDigestDesktop ? 'GitHub URL or local path' : 'https://github.com/owner/repository'}
                     required
                     className="w-full px-3.5 sm:px-5 py-2.5 sm:py-3.5 bg-transparent placeholder-gray-500 text-white font-medium text-xs sm:text-base focus:outline-none"
                   />
@@ -430,6 +430,27 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
                 )}
               </div>
             </div>
+
+            {window.gitDigestDesktop && (
+              <div className="flex flex-wrap gap-2">
+                {(['folder', 'file'] as const).map((kind) => (
+                  <button
+                    key={kind}
+                    type="button"
+                    disabled={isLoading}
+                    className="rounded border border-[#30363d] bg-[#21262d] px-3 py-1.5 text-sm font-medium hover:border-amber-400 disabled:opacity-60"
+                    onClick={async () => {
+                      const selected = await window.gitDigestDesktop?.pickLocalPath(kind);
+                      if (!selected) return;
+                      setUrl(selected);
+                      onUrlChange?.(selected);
+                    }}
+                  >
+                    {kind === 'folder' ? 'Choose folder' : 'Choose file'}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Dynamic Personal Repositories Section */}
             {userRepos.length > 0 && (
