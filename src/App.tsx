@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
-import { keepDesktopPreview } from './services/digestExport';
+import { releaseDesktopDigest, storeDesktopDigest } from './services/digestExport';
 import { GitForm } from './components/GitForm';
 import { ResultSection } from './components/ResultSection';
 import { TokenModal } from './components/TokenModal';
@@ -218,6 +218,7 @@ export default function App() {
     e.stopPropagation();
     if (sessions.length <= 1) return;
     handleCancelSession(id);
+    releaseDesktopDigest(sessions.find((session) => session.id === id)?.result);
     const newSessions = sessions.filter((s) => s.id !== id);
     setSessions(newSessions);
     if (activeSessionId === id) {
@@ -241,6 +242,7 @@ export default function App() {
     const sessionId = activeSessionId;
     const abortController = new AbortController();
     const startTime = Date.now();
+    releaseDesktopDigest(activeSession.result);
 
     // Prompt for notification permission on user action
     void notifier.requestPermission();
@@ -290,7 +292,11 @@ export default function App() {
     try {
       const response = await performIngest({ ...req, onProgress }, abortController.signal);
       const data = window.gitDigestDesktop?.fetchApi && typeof response.content === 'string' && typeof response.tree === 'string'
-        ? keepDesktopPreview(response) : response;
+        ? await storeDesktopDigest(response) : response;
+      if (abortController.signal.aborted) {
+        releaseDesktopDigest(data);
+        return;
+      }
       if (data.mode_switched) {
         try { localStorage.setItem('gitingest_fallback_active', 'true'); } catch {}
       }
@@ -343,6 +349,7 @@ export default function App() {
 
   const handleReset = () => {
     handleCancelSession();
+    releaseDesktopDigest(activeSession.result);
     updateActiveSession({
       result: null,
       error: null,

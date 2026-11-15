@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Copy, Check, Download, FolderTree, FileText, BarChart3, Hash, Cpu, XCircle, Timer, AlertCircle, FileArchive, Layers, FolderArchive } from 'lucide-react';
 import { IngestResponse } from '../types';
 import { IngestionTimer, formatDuration } from './IngestionTimer';
-import { fullDigestSection } from '../services/digestExport';
+import { desktopDownloadBlob, fullDigestSection } from '../services/digestExport';
 import { splitDigestSafely, downloadSplitPartsAsZip, SplitPart } from '../services/textSplitter';
 import { downloadIndividualFilesAsZip, extractIndividualFiles } from '../services/zipExporter';
 import { getSavedMaxOutputSize } from '../services/ingest';
@@ -195,9 +195,8 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
 
     try {
       setIsSplittingDownload(true);
-      const fullText = await fullDigestSection(result, 'all');
-
-      const parts = splitDigestSafely(fullText, maxOutputBytes, filename);
+      const stored = await desktopDownloadBlob(result, maxOutputBytes);
+      const parts = stored ? [] : splitDigestSafely(await fullDigestSection(result, 'all'), maxOutputBytes, filename);
 
       if (parts.length > 1) {
         // Output text file size exceeds user threshold: split into safe parts inside a zip package
@@ -205,11 +204,11 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
         await downloadSplitPartsAsZip(parts, zipFilename);
       } else {
         // Single file within max output threshold
-        const blob = new Blob([parts[0].content], { type: 'text/plain;charset=utf-8' });
+        const blob = stored ?? new Blob([parts[0].content], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = parts[0].filename;
+        link.download = stored ? filename : parts[0].filename;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

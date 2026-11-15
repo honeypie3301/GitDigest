@@ -10,7 +10,7 @@ import { build } from 'esbuild';
 
 const project = path.resolve(import.meta.dirname, '..');
 const desktop = path.join(project, 'desktop/rust');
-const output = path.join(project, 'build/desktop-rust');
+const output = path.join(project, 'build/desktop-rust', process.env.GITDIGEST_BUILD_SUBDIR ?? '');
 const payload = path.join(output, 'payload');
 const tools = path.join(project, 'build/desktop-tools');
 const archive = path.join(tools, 'MinGit-2.56.1-64-bit.zip');

@@ -5,7 +5,10 @@ mod compatibility;
 mod local;
 
 use std::{net::TcpListener, sync::Arc};
-use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, webview::NewWindowResponse};
+use tauri::{
+    Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent, webview::NewWindowResponse,
+};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -36,6 +39,13 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            if let WindowEvent::Focused(focused) = event
+                && let Some(webview) = window.get_webview_window(window.label())
+            {
+                set_webview_memory_target(&webview, *focused);
+            }
+        })
         .invoke_handler(tauri::generate_handler![pick_local_path])
         .setup(|app| {
             let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
@@ -64,27 +74,31 @@ fn main() {
                 .replace("__API_KEY__", &serde_json::to_string(&key)?);
             let handle = app.handle().clone();
             let popup_handle = handle.clone();
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("GitDigest")
-                .inner_size(1280.0, 900.0)
-                .min_inner_size(420.0, 480.0)
-                .initialization_script(bridge)
-                .on_navigation(move |url| {
-                    if url.host_str() == Some("tauri.localhost") && url.scheme() == "http" {
-                        return true;
-                    }
-                    if url.scheme() == "https" {
-                        let _ = handle.opener().open_url(url.as_str(), None::<&str>);
-                    }
-                    false
-                })
-                .on_new_window(move |url, _| {
-                    if url.scheme() == "https" {
-                        let _ = popup_handle.opener().open_url(url.as_str(), None::<&str>);
-                    }
-                    NewWindowResponse::Deny
-                })
-                .build()?;
+            let window =
+                WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                    .title("GitDigest")
+                    .inner_size(1280.0, 900.0)
+                    .min_inner_size(420.0, 480.0)
+                    .visible(false)
+                    .initialization_script(bridge)
+                    .on_navigation(move |url| {
+                        if url.host_str() == Some("tauri.localhost") && url.scheme() == "http" {
+                            return true;
+                        }
+                        if url.scheme() == "https" {
+                            let _ = handle.opener().open_url(url.as_str(), None::<&str>);
+                        }
+                        false
+                    })
+                    .on_new_window(move |url, _| {
+                        if url.scheme() == "https" {
+                            let _ = popup_handle.opener().open_url(url.as_str(), None::<&str>);
+                        }
+                        NewWindowResponse::Deny
+                    })
+                    .build()?;
+            fit_to_work_area(&window)?;
+            window.show()?;
             Ok(())
         })
         .build(tauri::generate_context!());
@@ -111,4 +125,68 @@ fn main() {
             }
         }
     }
+}
+
+fn fit_to_work_area(window: &WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = window.current_monitor()?.or(window.primary_monitor()?) else {
+        return Ok(());
+    };
+    let work = monitor.work_area();
+    let outer = window.outer_size()?;
+    let inner = window.inner_size()?;
+    let width = inner
+        .width
+        .min(
+            work.size
+                .width
+                .saturating_sub(outer.width.saturating_sub(inner.width)),
+        )
+        .max(1);
+    let height = inner
+        .height
+        .min(
+            work.size
+                .height
+                .saturating_sub(outer.height.saturating_sub(inner.height)),
+        )
+        .max(1);
+    if width != inner.width || height != inner.height {
+        let minimum_width = (420.0 * monitor.scale_factor()).round() as u32;
+        let minimum_height = (480.0 * monitor.scale_factor()).round() as u32;
+        window.set_min_size(Some(PhysicalSize::new(
+            width.min(minimum_width),
+            height.min(minimum_height),
+        )))?;
+        window.set_size(PhysicalSize::new(width, height))?;
+    }
+    let outer = window.outer_size()?;
+    window.set_position(PhysicalPosition::new(
+        work.position.x + (work.size.width.saturating_sub(outer.width) / 2) as i32,
+        work.position.y + (work.size.height.saturating_sub(outer.height) / 2) as i32,
+    ))
+}
+
+fn set_webview_memory_target(window: &WebviewWindow, focused: bool) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
+        ICoreWebView2_19,
+    };
+    use windows_core::Interface;
+
+    let _ = window.with_webview(move |webview| {
+        let target = if focused {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+        } else {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+        };
+        // Tauri hands this callback the controller on its UI thread. Older runtimes
+        // may not implement the optional memory-target interface.
+        unsafe {
+            if let Ok(core) = webview.controller().CoreWebView2()
+                && let Ok(core) = core.cast::<ICoreWebView2_19>()
+            {
+                let _ = core.SetMemoryUsageTargetLevel(target);
+            }
+        }
+    });
 }

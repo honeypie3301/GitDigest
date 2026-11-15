@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "gitdigest"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "axum",
  "fancy-regex",
@@ -1397,6 +1397,9 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
+ "tokio-util",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.61.2",
  "zip",
 ]
