@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
+  actions: read
   contents: read
   pages: write
   id-token: write
@@ -17,11 +17,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.artifact.outputs.name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,27 +39,40 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
-      # A rerun of all jobs keeps artifacts from the earlier attempt under the same
-      # workflow run ID. Remove only this run's Pages artifacts before uploading a
-      # replacement so deploy-pages sees exactly one artifact named github-pages.
-      - name: Remove previous Pages artifacts for this run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          artifact_ids="$(gh api --paginate "repos/${GH_REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[] | select(.name == "github-pages") | .id')"
-          while IFS= read -r artifact_id; do
-            if [ -n "$artifact_id" ]; then
-              gh api --method DELETE "repos/${GH_REPO}/actions/artifacts/${artifact_id}"
-            fi
-          done <<< "$artifact_ids"
+      - name: Name Pages artifact
+        id: artifact
+        run: echo "name=github-pages-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          name: ${{ steps.artifact.outputs.name }}
           path: './dist'
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Pages artifact metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ needs.build.outputs.artifact-name }}
+        run: |
+          for attempt in {1..12}; do
+            if count="$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" -f name="$ARTIFACT_NAME" --jq '.artifacts | map(select(.expired == false)) | length')" &&
+               [ "$count" = 1 ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Pages artifact $ARTIFACT_NAME was not visible after upload."
+          exit 1
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.build.outputs.artifact-name }}
