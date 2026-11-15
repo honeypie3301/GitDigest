@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { IngestResponse } from '../types';
+import { fullDigestSection } from './digestExport';
 
 export interface ExtractedFile {
   path: string;
@@ -68,7 +69,7 @@ export function getBestCompressionMethod(preferred?: 'DEFLATE' | 'STORE' | 'auto
   if (preferred && preferred !== 'auto') return preferred;
   if (typeof window !== 'undefined') {
     const host = window.location.hostname;
-    if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) {
+    if (window.gitDigestDesktop || host === 'localhost' || host === '127.0.0.1' || host.endsWith('.local')) {
       return 'STORE';
     }
   }
@@ -85,15 +86,17 @@ export async function downloadIndividualFilesAsZip(
   onProgress?: (percent: number, currentFile: string) => void,
   preferredMethod: 'DEFLATE' | 'STORE' | 'auto' = 'auto'
 ): Promise<void> {
-  const files = extractIndividualFiles(result);
+  const content = result.content_preview_truncated ? await fullDigestSection(result, 'content') : result.content;
+  const tree = result.tree_preview_truncated ? await fullDigestSection(result, 'tree') : result.tree;
+  const files = extractIndividualFiles({ ...result, content });
   const zip = new JSZip();
 
   // 1. Add SUMMARY and Directory Structure metadata files
   if (result.summary) {
     zip.file('SUMMARY.txt', result.summary);
   }
-  if (result.tree) {
-    zip.file('DIRECTORY_STRUCTURE.txt', result.tree);
+  if (tree) {
+    zip.file('DIRECTORY_STRUCTURE.txt', tree);
   }
 
   // 2. Add individual files preserving directory hierarchy

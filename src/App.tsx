@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
+import { keepDesktopPreview } from './services/digestExport';
 import { GitForm } from './components/GitForm';
 import { ResultSection } from './components/ResultSection';
 import { TokenModal } from './components/TokenModal';
@@ -264,18 +265,32 @@ export default function App() {
     // Reset live events for this session
     setLiveEventsMap((prev) => ({ ...prev, [sessionId]: [] }));
 
-    const onProgress = (event: IngestFileEvent) => {
+    let pending: IngestFileEvent[] = [];
+    let progressTimer: ReturnType<typeof setTimeout> | undefined;
+    const flushProgress = () => {
+      if (progressTimer !== undefined) clearTimeout(progressTimer);
+      progressTimer = undefined;
+      if (abortController.signal.aborted || pending.length === 0) return;
+      const batch = pending;
+      pending = [];
       setLiveEventsMap((prev) => {
         const current = prev[sessionId] || [];
         return {
           ...prev,
-          [sessionId]: [...current, event],
+          [sessionId]: [...current, ...batch].slice(-150),
         };
       });
     };
+    const onProgress = (event: IngestFileEvent) => {
+      pending.push(event);
+      if (pending.length === 150) flushProgress();
+      else progressTimer ??= setTimeout(flushProgress, 50);
+    };
 
     try {
-      const data = await performIngest({ ...req, onProgress }, abortController.signal);
+      const response = await performIngest({ ...req, onProgress }, abortController.signal);
+      const data = window.gitDigestDesktop?.fetchApi && typeof response.content === 'string' && typeof response.tree === 'string'
+        ? keepDesktopPreview(response) : response;
       if (data.mode_switched) {
         try { localStorage.setItem('gitingest_fallback_active', 'true'); } catch {}
       }
@@ -321,6 +336,8 @@ export default function App() {
           return s;
         })
       );
+    } finally {
+      flushProgress();
     }
   };
 

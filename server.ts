@@ -33,11 +33,12 @@ const execFileAsync = async (file: string, args: string[], options: any = {}): P
 };
 const fsPromises = fs.promises;
 const app = express();
-const PORT = desktopKey ? 39427 : process.env.PORT || 3000;
+const compatibilityBackend = !!desktopKey && process.env.GITDIGEST_DESKTOP_COMPATIBILITY === '1';
+const PORT = compatibilityBackend ? 0 : desktopKey ? 39427 : process.env.PORT || 3000;
 
 if (desktopKey) {
   app.use((req, res, next) => {
-    if (req.headers.host !== `127.0.0.1:${PORT}` || req.headers['x-gitdigest-desktop'] !== desktopKey) {
+    if (req.headers.host !== `127.0.0.1:${req.socket.localPort}` || req.headers['x-gitdigest-desktop'] !== desktopKey) {
       return res.sendStatus(403);
     }
     return next();
@@ -1114,7 +1115,7 @@ async function startServer() {
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
-  } else {
+  } else if (!compatibilityBackend) {
     if (desktopKey) throw new Error('Desktop frontend is missing.');
     const { createServer } = await import('vite');
     const vite = await createServer({
@@ -1125,10 +1126,11 @@ async function startServer() {
   }
 
   const host = desktopKey ? '127.0.0.1' : '0.0.0.0';
-  app.listen(Number(PORT), host, () => {
+  const listener = app.listen(Number(PORT), host, () => {
     const desktopProcess = process as typeof process & { parentPort?: { postMessage(message: string): void } };
     if (desktopKey) desktopProcess.parentPort?.postMessage('ready');
-    console.log(`GitIngest server running on http://${host}:${PORT}`);
+    const address = listener.address();
+    console.log(`GitIngest server running on http://${host}:${typeof address === 'object' && address ? address.port : PORT}`);
   });
 }
 

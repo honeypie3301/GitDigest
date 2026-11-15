@@ -15,11 +15,13 @@ A high-performance codebase ingestion tool designed to convert any Git repositor
 
 ## Windows Desktop App
 
-Open `GitDigest-Windows-x64.exe` to launch GitDigest. The portable executable bundles its runtime and Git. Paste a GitHub URL or use **Choose folder** or **Choose file**, then click **Ingest**. Local inputs are processed on your PC. For private repos, provide a GitHub token with access to the repo.
+Run `GitDigest-Windows-x64-Setup.exe` to install GitDigest for your Windows account, or double-click the portable `GitDigest.exe` to run it from its current folder. Both use Windows' WebView2 runtime. Setup provisions WebView2 if needed. The portable executable requires a PC with WebView2 already available, as on Windows 11.
+
+Paste a GitHub URL or use **Choose folder** or **Choose file**, then click **Ingest**. The Rust engine handles ordinary local inputs entirely on your PC. The bundled GitHub engine and Java class decompiler are extracted to the current user's app data when first needed, then reused. For private repos, provide a GitHub token with access to the repo.
 
 The desktop app has no per-minute ingestion cap. If GitHub's REST API quota is exhausted, ingestion falls back to a shallow Git clone. GitHub can still restrict access to its own services.
 
-To build the executable on Windows, run `npm ci` followed by `npm run build:desktop`. The executable is written to `build/desktop/GitDigest-Windows-x64.exe`.
+To build both packages on Windows, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and use 64-bit Node.js 22 or newer. Run `npm ci` and `npm run build:desktop`. The executables are written to `build/desktop-rust`. The previous Electron build remains available through `npm run build:desktop:electron` for comparison.
 
 ## Running Locally
 

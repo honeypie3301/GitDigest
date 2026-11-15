@@ -23,6 +23,13 @@ interface AuthCache {
 
 const STATUS_CACHE_KEY = 'gitingest_status_cache';
 
+function fetchApi(path: string, options?: RequestInit): Promise<Response> {
+  if (typeof window !== 'undefined' && window.gitDigestDesktop?.fetchApi) {
+    return window.gitDigestDesktop.fetchApi(path, options);
+  }
+  return fetch(path, options);
+}
+
 export function getCachedTokenStatus(): TokenStatus {
   try {
     const raw = localStorage.getItem(STATUS_CACHE_KEY);
@@ -243,7 +250,7 @@ export async function verifyAuthWithServer(input: string): Promise<{ success: bo
   let serverError: string | null = null;
   if (!isStaticHosting) {
     try {
-      const res = await fetch('/api/verify-auth', {
+      const res = await fetchApi('/api/verify-auth', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -323,7 +330,7 @@ export async function checkServerTokenStatus(): Promise<TokenStatus> {
       headers.Authorization = `Bearer ${saved}`;
     }
 
-    const res = await fetch('/api/user-status', { headers });
+    const res = await fetchApi('/api/user-status', { headers });
     if (res.ok) {
       const data = await readApiResponse(res, 'Unable to check token status');
       if (data.configured && data.authorized) {
@@ -382,7 +389,7 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
   }
 
   try {
-    const response = await fetch('/api/ingest', {
+    const response = await fetchApi('/api/ingest', {
       method: 'POST',
       headers: {
         ...headers,
@@ -398,20 +405,18 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
       if (contentType.includes('application/x-ndjson') && response.body) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = '';
+        const fragments: string[] = [];
         let finalResult: IngestResponse | null = null;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
+        const consume = (chunk: string) => {
+          let start = 0;
+          for (let end = chunk.indexOf('\n'); end !== -1; end = chunk.indexOf('\n', start)) {
+            fragments.push(chunk.slice(start, end));
+            const line = fragments.length === 1 ? fragments[0] : fragments.join('');
+            fragments.length = 0;
+            start = end + 1;
             try {
-              const parsed = JSON.parse(line.trim());
+              const parsed = JSON.parse(line);
               if (parsed.type === 'progress') {
                 request.onProgress?.({
                   path: parsed.path,
@@ -426,19 +431,17 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
               }
             } catch {}
           }
+          if (start < chunk.length) fragments.push(chunk.slice(start));
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          consume(decoder.decode(value, { stream: true }));
         }
-
-        if (buffer.trim()) {
-          try {
-            const parsed = JSON.parse(buffer.trim());
-            if (parsed.type === 'result' && parsed.data) {
-              finalResult = parsed.data;
-            }
-          } catch {}
-        }
-
-        if (finalResult && 'tree' in finalResult && typeof finalResult.tree === 'string') {
-          return finalResult;
+        consume(decoder.decode() + '\n');
+        const result = finalResult as IngestResponse | null;
+        if (result && typeof result.tree === 'string') {
+          return result;
         }
         if (serverError) throw new Error(serverError);
       }

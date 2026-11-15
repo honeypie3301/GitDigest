@@ -1,10 +1,41 @@
 import type { IngestResponse } from '../types';
 
+const desktopSections = new WeakMap<IngestResponse, { content: Blob; tree: Blob }>();
+const DESKTOP_PREVIEW = 50_000;
+
+function copyPreview(text: string) {
+  if (text.length <= DESKTOP_PREVIEW) return text;
+  // Copy the prefix so a V8 substring cannot keep the entire digest alive.
+  const end = /[\uD800-\uDBFF]/.test(text[DESKTOP_PREVIEW - 1]) ? DESKTOP_PREVIEW - 1 : DESKTOP_PREVIEW;
+  return new TextDecoder('utf-8', { ignoreBOM: true }).decode(new TextEncoder().encode(text.slice(0, end)));
+}
+
+export function keepDesktopPreview(result: IngestResponse): IngestResponse {
+  if (result.artifact_url || (result.content.length <= DESKTOP_PREVIEW && result.tree.length <= DESKTOP_PREVIEW)) {
+    return result;
+  }
+  const preview = {
+    ...result,
+    content: copyPreview(result.content),
+    tree: copyPreview(result.tree),
+    content_chars: result.content.length,
+    content_preview_truncated: result.content.length > DESKTOP_PREVIEW,
+    tree_preview_truncated: result.tree.length > DESKTOP_PREVIEW,
+  };
+  desktopSections.set(preview, { content: new Blob([result.content]), tree: new Blob([result.tree]) });
+  return preview;
+}
+
 export async function artifactUrl(result: IngestResponse) {
   return result.refreshArtifactUrl ? result.refreshArtifactUrl() : result.artifact_url!;
 }
 
 export async function fullDigestSection(result: IngestResponse, section: 'all' | 'tree' | 'content') {
+  const local = desktopSections.get(result);
+  if (local) {
+    if (section !== 'all') return local[section].text();
+    return new Blob([result.summary, '\n\n', local.tree, '\n\n', local.content]).text();
+  }
   if (section === 'tree' && !result.tree_preview_truncated) return result.tree;
   if (section === 'content' && !result.content_preview_truncated) return result.content;
   if (!result.artifact_url) return `${result.summary}\n\n${result.tree}\n\n${result.content}`;

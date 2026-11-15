@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Copy, Check, Download, FolderTree, FileText, BarChart3, Hash, Cpu, XCircle, Timer, AlertCircle, FileArchive, Layers, FolderArchive } from 'lucide-react';
 import { IngestResponse } from '../types';
 import { IngestionTimer, formatDuration } from './IngestionTimer';
-import { artifactUrl, fullDigestSection } from '../services/digestExport';
+import { fullDigestSection } from '../services/digestExport';
 import { splitDigestSafely, downloadSplitPartsAsZip, SplitPart } from '../services/textSplitter';
 import { downloadIndividualFilesAsZip, extractIndividualFiles } from '../services/zipExporter';
 import { getSavedMaxOutputSize } from '../services/ingest';
@@ -39,11 +39,12 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
   const [isSplittingDownload, setIsSplittingDownload] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [zipProgress, setZipProgress] = useState<{ percent: number; file: string }>({ percent: 0, file: '' });
-  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [breakdown, setBreakdown] = useState<{ result: IngestResponse; data: ReturnType<typeof makeBreakdown> } | null>(null);
+  const showBreakdown = !!breakdown && breakdown.result === result;
+  const breakdownData = showBreakdown ? breakdown.data : null;
 
-  const breakdownData = useMemo(() => {
-    if (!result) return null;
-    const extracted = extractIndividualFiles(result);
+  function makeBreakdown(source: IngestResponse) {
+    const extracted = extractIndividualFiles(source);
     if (!extracted || extracted.length === 0) return null;
 
     const fileStats = extracted.map((f) => {
@@ -74,7 +75,21 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
       topFiles,
       dirStats: dirStats.slice(0, 6),
     };
-  }, [result]);
+  }
+
+  const toggleBreakdown = async () => {
+    if (!result) return;
+    if (showBreakdown) {
+      setBreakdown(null);
+      return;
+    }
+    try {
+      const content = result.content_preview_truncated ? await fullDigestSection(result, 'content') : result.content;
+      setBreakdown({ result, data: makeBreakdown({ ...result, content }) });
+    } catch (err: any) {
+      setActionError(err.message || 'Token breakdown unavailable');
+    }
+  };
 
   const handleDownloadZip = async () => {
     if (!result) return;
@@ -106,6 +121,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
   }, [result]);
   useEffect(() => {
     setActionError(null);
+    setBreakdown(null);
   }, [result]);
 
   const estimatedBytes = useMemo(() => {
@@ -143,7 +159,8 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
   const displayedContent = useMemo(() => {
     if (!result?.content) return '';
     if (!isHugeContent) return result.content;
-    return `${result.content.slice(0, MAX_PREVIEW_CHARS)}\n\n--- [PREVIEW TRUNCATED TO PREVENT BROWSER FREEZE: Remaining ${((result.content_chars ?? result.content.length) - MAX_PREVIEW_CHARS).toLocaleString()} characters omitted from preview. Use 'Copy Digest' or 'Download' to get the full file] ---`;
+    const preview = result.content.slice(0, MAX_PREVIEW_CHARS);
+    return `${preview}\n\n--- [PREVIEW TRUNCATED TO PREVENT BROWSER FREEZE: Remaining ${Math.max(0, (result.content_chars ?? result.content.length) - preview.length).toLocaleString()} characters omitted from preview. Use 'Copy Digest' or 'Download' to get the full file] ---`;
   }, [result?.content, result?.content_chars, isHugeContent]);
 
   const handleCopy = async (sectionName: 'all' | 'tree' | 'content') => {
@@ -178,12 +195,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
 
     try {
       setIsSplittingDownload(true);
-      let fullText: string;
-      if (result.artifact_url) {
-        fullText = await fullDigestSection(result, 'all');
-      } else {
-        fullText = `${result.summary}\n\n${result.tree}\n\n${result.content}`;
-      }
+      const fullText = await fullDigestSection(result, 'all');
 
       const parts = splitDigestSafely(fullText, maxOutputBytes, filename);
 
@@ -391,7 +403,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
         <div className="bg-[#161b22] rounded-2xl border-[3px] border-[#30363d] p-4 sm:p-6 lg:p-8 relative z-20 space-y-6 text-gray-100">
           
           {/* Token Breakdown Visualizer Toggle Bar */}
-          {breakdownData && (
+          {((result.files?.length ?? 0) > 0 || result.content.includes('================================================\nFile: ')) && (
             <div className="flex items-center justify-between pb-1 border-b border-[#30363d]">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-amber-400" />
@@ -401,7 +413,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
               </div>
               <button
                 type="button"
-                onClick={() => setShowBreakdown((prev) => !prev)}
+                onClick={toggleBreakdown}
                 className={`px-3 py-1 rounded-lg text-xs font-bold border-2 transition-all flex items-center gap-1.5 cursor-pointer shadow-[1px_1px_0_0_#000000] ${
                   showBreakdown
                     ? 'bg-amber-500 text-gray-950 border-amber-600'

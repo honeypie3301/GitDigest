@@ -24,9 +24,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={onReset}
             className="flex items-center gap-2 text-left group transition-transform cursor-pointer"
           >
-            <div className="w-7 h-7 sm:w-9 sm:h-9 rounded-lg bg-black border-2 border-amber-500/80 flex items-center justify-center p-1 shadow-[2px_2px_0_0_#000000] shrink-0">
-              <span className="font-mono font-black text-amber-400 text-sm sm:text-lg">G</span>
-            </div>
+            <img src="./static/favicons/favicon.svg" alt="" width={36} height={36} className="w-7 h-7 sm:w-9 sm:h-9 shrink-0" />
             <div className="flex items-center gap-1.5 sm:gap-2">
               <span className="font-extrabold text-lg sm:text-2xl tracking-tight text-white group-hover:text-amber-400 transition-colors">
                 gitdigest
