@@ -10,7 +10,7 @@ import type { Entry, ZipFile } from 'yauzl';
 import { openCachedZip, readZipBytes } from './zip-reader.js';
 import { buildAsciiTree, formatTokens, isBinaryPath } from '../src/services/ingestFormatting.js';
 import { assertNotRateLimited } from '../src/services/githubRateLimit.js';
-import { decompileJavaClass } from '../src/services/decompiler/javaClassDecompiler.js';
+import { decompileClassSource } from '../src/services/decompiler/cfr.js';
 
 export interface ArchiveOptions {
   owner: string;
@@ -25,6 +25,7 @@ export interface ArchiveOptions {
   onProgress?: (event: { path: string; count: number; total: number; status: 'completed' | 'binary' | 'decompiling' }) => void;
   preview_chars?: number;
   decompile_classes?: boolean;
+  class_mapping?: string;
 }
 
 export const PREVIEW_CHARS = 200_000;
@@ -188,7 +189,7 @@ export async function ingestArchive(archive: string, contentFile: string, digest
         if (name.toLowerCase().endsWith('.class')) {
           if (options.decompile_classes) {
             const buf = await readEntryBuffer(zip, entry, options.signal);
-            content = await decompileJavaClass(buf, path.basename(name, '.class'));
+            content = await decompileClassSource(buf, options.class_mapping);
             displayName += ' [Decompiled Java]';
           } else {
             content = '[Binary file: Java Class file]';
@@ -356,7 +357,7 @@ export async function ingestDirectory(dir: string, contentFile: string, digestFi
         if (name.toLowerCase().endsWith('.class')) {
           if (options.decompile_classes) {
             const buf = await readFile(file);
-            content = await decompileJavaClass(buf, path.basename(name, '.class'));
+            content = await decompileClassSource(buf, options.class_mapping);
             displayName += ' [Decompiled Java]';
           } else {
             content = '[Binary file: Java Class file]';

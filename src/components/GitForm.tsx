@@ -93,6 +93,8 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
   const [userRepos, setUserRepos] = useState<RepoSummary[]>([]);
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [decompileClasses, setDecompileClasses] = useState(false);
+  const [classMapping, setClassMapping] = useState<{ name: string; text: string }>();
+  const [mappingError, setMappingError] = useState('');
   const [recentIngests, setRecentIngests] = useState<RecentIngest[]>([]);
 
   useEffect(() => {
@@ -296,6 +298,7 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
       pattern: pattern.trim(),
       max_file_size: maxFileSize,
       decompile_classes: decompileClasses,
+      class_mapping: decompileClasses ? classMapping?.text : undefined,
       output_format: outputFormat,
     });
   };
@@ -315,6 +318,7 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
       pattern: pattern.trim(),
       max_file_size: maxFileSize,
       decompile_classes: decompileClasses,
+      class_mapping: decompileClasses ? classMapping?.text : undefined,
       output_format: outputFormat,
     });
   };
@@ -333,6 +337,7 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
       pattern: pattern.trim(),
       max_file_size: maxFileSize,
       decompile_classes: decompileClasses,
+      class_mapping: decompileClasses ? classMapping?.text : undefined,
       output_format: outputFormat,
     });
   };
@@ -921,6 +926,32 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
                   </div>
                   <span className="font-bold tracking-tight">Decompile .class</span>
                 </label>
+                {decompileClasses && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <label className="cursor-pointer text-amber-300 hover:text-amber-200">
+                      {classMapping?.name ?? 'Choose ProGuard/R8 mapping'}
+                      <input type="file" accept=".txt,.map,text/plain" className="sr-only" onChange={async event => {
+                        const file = event.currentTarget.files?.[0];
+                        event.currentTarget.value = '';
+                        if (!file) return;
+                        setMappingError('');
+                        try {
+                          if (file.size > 16 * 1024 * 1024) throw new Error('Mapping files can be up to 16 MiB.');
+                          const contents = await file.text();
+                          if (!/^[^\s#]+\s+->\s+[^\s:]+:\s*$/m.test(contents)) {
+                            throw new Error('Choose a ProGuard/R8 mapping file.');
+                          }
+                          setClassMapping({ name: file.name, text: contents });
+                        } catch (error) {
+                          setClassMapping(undefined);
+                          setMappingError((error as Error).message);
+                        }
+                      }} />
+                    </label>
+                    {classMapping && <button type="button" onClick={() => setClassMapping(undefined)}>Remove mapping</button>}
+                    {mappingError && <span role="alert" className="text-red-400">{mappingError}</span>}
+                  </div>
+                )}
 
                 <button
                   type="button"

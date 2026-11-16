@@ -52,10 +52,15 @@ export function extractIndividualFiles(result: IngestResponse): ExtractedFile[] 
  * - Strips leading / and \
  * - Converts decompiled java paths e.g. 'Class.class [Decompiled Java]' to 'Class.java'
  */
-export function normalizeZipPath(rawPath: string): string {
+export function normalizeZipPath(rawPath: string, source?: string): string {
   let clean = rawPath.replace(/^[\\/]+/, '').trim();
   if (clean.endsWith(' [Decompiled Java]')) {
     clean = clean.replace(/\.class\s*\[Decompiled Java\]$/i, '.java');
+    // The class declaration can have a new name after applying a mapping.
+    if (source?.startsWith('/*\n * Decompiled with CFR ')) {
+      const declaration = /^(?:public |private |protected |static |final |abstract |strictfp |sealed |non-sealed )*(?:class|interface|enum|record|@interface) ([\p{ID_Start}_$][\p{ID_Continue}$]*)/mu.exec(source);
+      if (declaration) clean = clean.slice(0, clean.lastIndexOf('/') + 1) + declaration[1] + '.java';
+    }
   }
   return clean;
 }
@@ -102,7 +107,7 @@ export async function downloadIndividualFilesAsZip(
   // 2. Add individual files preserving directory hierarchy
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const zipPath = normalizeZipPath(file.path);
+    const zipPath = normalizeZipPath(file.path, file.text);
     if (zipPath) {
       zip.file(zipPath, file.text);
     }

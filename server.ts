@@ -7,7 +7,7 @@ import os from 'os';
 import dotenv from 'dotenv';
 import JSZip from 'jszip';
 import { handleWorkerJob, submitWorkerJob } from './lib/worker-proxy.ts';
-import { decompileJavaClass } from './src/services/decompiler/javaClassDecompiler.ts';
+import { decompileClassSource, readClassMapping } from './src/services/decompiler/cfr.ts';
 
 const desktopKey = process.env.GITDIGEST_DESKTOP_KEY;
 const desktopGit = desktopKey ? process.env.GITDIGEST_DESKTOP_GIT : undefined;
@@ -324,6 +324,12 @@ app.post('/api/ingest', async (req, res) => {
   if (!input_text || typeof input_text !== 'string') {
     return res.status(400).json({ error: 'Please provide a valid repository URL or path' });
   }
+  let classMapping: string | undefined;
+  try {
+    if (decompile_classes) classMapping = readClassMapping(req.body.class_mapping);
+  } catch (error) {
+    return res.status(400).json({ error: (error as Error).message });
+  }
   if (workerEnabled) return submitWorkerJob(req, res);
 
   const isNdjson = !req.headers['x-no-stream'] && (
@@ -465,7 +471,7 @@ app.post('/api/ingest', async (req, res) => {
             let fileHeader = file.relPath;
             if (file.relPath.toLowerCase().endsWith('.class')) {
               if (decompile_classes) {
-                content = await decompileJavaClass(buf, path.basename(file.relPath, '.class'));
+                content = await decompileClassSource(buf, classMapping);
                 fileHeader += ' [Decompiled Java]';
               } else {
                 content = '[Binary file: Java Class file]';
@@ -690,7 +696,7 @@ app.post('/api/ingest', async (req, res) => {
                 if (relPath.toLowerCase().endsWith('.class')) {
                   const buf = await obj.async('nodebuffer');
                   if (decompile_classes) {
-                    content = await decompileJavaClass(buf, path.basename(relPath, '.class'));
+                    content = await decompileClassSource(buf, classMapping);
                     fileHeader += ' [Decompiled Java]';
                   } else {
                     content = '[Binary file: Java Class file]';
@@ -947,7 +953,7 @@ app.post('/api/ingest', async (req, res) => {
             let fileHeader = file.relPath;
             if (file.relPath.toLowerCase().endsWith('.class')) {
               if (decompile_classes) {
-                content = await decompileJavaClass(buf, path.basename(file.relPath, '.class'));
+                content = await decompileClassSource(buf, classMapping);
                 fileHeader += ' [Decompiled Java]';
               } else {
                 content = '[Binary file: Java Class file]';

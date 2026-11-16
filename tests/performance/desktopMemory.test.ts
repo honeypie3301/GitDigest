@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fullDigestSection, keepDesktopPreview } from '../../src/services/digestExport';
 import { performIngest } from '../../src/services/ingest';
+import { normalizeZipPath } from '../../src/services/zipExporter';
+
+test('mapped Java ZIP exports use the reconstructed class name', () => {
+  assert.equal(normalizeZipPath('classes/A.class [Decompiled Java]', '/*\n * Decompiled with CFR 0.152.\n */\npublic final class Readable {}'), 'classes/Readable.java');
+  assert.equal(normalizeZipPath('classes/A.class [Decompiled Java]', '// CFR decompilation unavailable'), 'classes/A.java');
+});
 
 test('desktop previews preserve the complete tree, content and combined export', async () => {
   const original = {

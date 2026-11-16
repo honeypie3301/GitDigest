@@ -10,6 +10,7 @@ import { downloadArchive, ingestArchive, ingestDirectory, sparseClone } from './
 import { ArtifactStorage } from './storage.js';
 import type { IngestFileEvent, IngestRequest } from '../src/types/index.js';
 import { GitHubRateLimitError, githubRateLimitMessage } from '../src/services/githubRateLimit.js';
+import { readClassMapping } from '../src/services/decompiler/cfr.js';
 
 type State = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
 interface Job {
@@ -43,7 +44,7 @@ export async function createWorkerApp() {
   await Promise.all(['jobs', 'cache', 'archives'].map(name => mkdir(path.join(root, name), { recursive: true })));
   const storage = new ArtifactStorage();
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '48mb' }));
   const controllers = new Map<string, AbortController>();
   const liveJobs = new Map<string, Job>();
   const queue: Array<() => Promise<void>> = [];
@@ -185,8 +186,11 @@ export async function createWorkerApp() {
       if (!commitResponse.ok) { res.status(commitResponse.status).json({ error: `Branch access failed (${commitResponse.status}).` }); return; }
       const commit = (await commitResponse.json()).sha as string;
       if (!/^[a-f0-9]{40,64}$/.test(commit)) throw new Error('Invalid commit returned by GitHub.');
-      const options = { owner: parsed.owner, repo: parsed.repo, branch: branch!, subpath: parsed.subpath, pattern: input.pattern || '', pattern_type: input.pattern_type || 'exclude' as const, max_file_size: input.max_file_size ?? 50, decompile_classes: Boolean(input.decompile_classes) };
-      const key = hash(JSON.stringify({ version: 1, commit, ...options }));
+      let classMapping: string | undefined;
+      try { if (input.decompile_classes) classMapping = readClassMapping(input.class_mapping); }
+      catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
+      const options = { owner: parsed.owner, repo: parsed.repo, branch: branch!, subpath: parsed.subpath, pattern: input.pattern || '', pattern_type: input.pattern_type || 'exclude' as const, max_file_size: input.max_file_size ?? 50, decompile_classes: Boolean(input.decompile_classes), class_mapping: classMapping };
+      const key = hash(JSON.stringify({ version: input.decompile_classes ? 2 : 1, commit, ...options }));
       const job: Job = { id: randomUUID(), key, state: 'queued', phase: 'queued', created: Date.now(), files_processed: 0, commit };
       await persist(job);
       const directory = path.join(root, 'cache', key);

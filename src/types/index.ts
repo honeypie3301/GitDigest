@@ -16,6 +16,7 @@ export interface IngestRequest {
   pattern?: string;
   token?: string;
   decompile_classes?: boolean;
+  class_mapping?: string;
   output_format?: IngestionOutputFormat;
   onProgress?: (event: IngestFileEvent) => void;
 }

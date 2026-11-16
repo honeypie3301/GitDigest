@@ -7,6 +7,7 @@ import { isLocalPath } from '../src/services/ingest';
 import { checkOwnerAuth } from '../lib/owner-auth';
 import { submitWorkerJob } from '../lib/worker-proxy';
 import { GitHubRateLimitError, githubRateLimitMessage } from '../src/services/githubRateLimit';
+import { readClassMapping } from '../src/services/decompiler/cfr';
 
 export const config = {
   maxDuration: 60, // allow up to 60s execution for large repos
@@ -33,6 +34,9 @@ export default async function handler(req: any, res: any) {
   if (process.env.INGEST_WORKER_URL) {
     return submitWorkerJob(req, res);
   }
+  let classMapping: string | undefined;
+  try { if (decompile_classes) classMapping = readClassMapping(req.body.class_mapping); }
+  catch (error) { return res.status(400).json({ error: (error as Error).message }); }
 
   const controller = new AbortController();
   res.on?.('close', () => { if (!res.writableEnded) controller.abort(); });
@@ -99,6 +103,7 @@ export default async function handler(req: any, res: any) {
       const result = await ingestArchive(archive, path.join(directory, 'content.txt'), path.join(directory, 'digest.txt'), {
         owner, repo, branch, subpath: parsed!.subpath, max_file_size, pattern_type, pattern,
         decompile_classes,
+        class_mapping: classMapping,
         preview_chars: Number.MAX_SAFE_INTEGER,
         signal: controller.signal,
       });

@@ -1,6 +1,5 @@
 import { buildAsciiTree, formatTokens, isBinaryPath, parseGitHubUrl } from './ingestFormatting';
 import { assertNotRateLimited, GitHubRateLimitError } from './githubRateLimit';
-import { decompileJavaClass } from './decompiler/javaClassDecompiler';
 export { parseGitHubUrl } from './ingestFormatting';
 import { IngestRequest, IngestResponse, GitHubUser } from '../types';
 
@@ -281,13 +280,17 @@ export async function ingestViaGitHubApi(
       return { path: file.path, text: '[Binary file]' };
     }
 
-    // Handle .class files when decompilation is disabled
-    if (isClass && !req.decompile_classes) {
-      return { path: file.path, text: '[Binary file: Java Class file]' };
+    if (isClass) {
+      return {
+        path: file.path,
+        text: req.decompile_classes
+          ? '[Java Class file: use the desktop app or a CFR-enabled server to decompile]'
+          : '[Binary file: Java Class file]',
+      };
     }
 
     // Decompilation or text fetching via GitHub Blobs API
-    if (validToken || isClass) {
+    if (validToken) {
       try {
         const blobUrl = `https://api.github.com/repos/${owner}/${repo}/git/blobs/${file.sha}`;
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' };
@@ -303,10 +306,6 @@ export async function ingestViaGitHubApi(
             const bytes = new Uint8Array(binary.length);
             for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
 
-            if (isClass) {
-              const decompiled = await decompileJavaClass(bytes, file.path.split('/').pop()?.replace(/\.class$/i, '') || 'Class');
-              return { path: file.path + ' [Decompiled Java]', text: decompiled };
-            }
             const text = new TextDecoder('utf-8').decode(bytes);
             return { path: file.path, text };
           }

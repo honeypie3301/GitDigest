@@ -13,8 +13,8 @@ use tokio::{
     time::{Duration, timeout},
 };
 
-const PACK_MAGIC: &[u8; 16] = b"GITDIGEST-PACK1\0";
-const FOOTER_LENGTH: usize = 16 + 3 * 8 + 32;
+const PACK_MAGIC: &[u8; 16] = b"GITDIGEST-PACK2\0";
+const FOOTER_LENGTH: usize = 16 + 4 * 8 + 32;
 
 pub struct Compatibility {
     worker: Arc<Mutex<Option<Worker>>>,
@@ -67,6 +67,7 @@ impl Compatibility {
             .arg(payload.join("server.cjs"))
             .env("GITDIGEST_DESKTOP_KEY", key)
             .env("GITDIGEST_DESKTOP_COMPATIBILITY", "1")
+            .env("GITDIGEST_CFR_HOME", &payload)
             .env("GITDIGEST_DESKTOP_GIT", payload.join("git/cmd/git.exe"))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -143,14 +144,16 @@ fn unpack(cache: &Path) -> io::Result<PathBuf> {
         return Err(io::Error::other("Missing bundled ingestion engine"));
     }
     let length = |offset| u64::from_le_bytes(footer[offset..offset + 8].try_into().unwrap());
-    let [node_length, git_length, backend_length] = [length(16), length(24), length(32)];
+    let [node_length, git_length, backend_length, java_length] =
+        [length(16), length(24), length(32), length(40)];
     let offset = end
         .checked_sub(node_length)
         .and_then(|pos| pos.checked_sub(git_length))
         .and_then(|pos| pos.checked_sub(backend_length))
+        .and_then(|pos| pos.checked_sub(java_length))
         .filter(|pos| *pos != 0 && git_length < 300 * 1024 * 1024)
         .ok_or_else(|| io::Error::other("Invalid bundled ingestion engine"))?;
-    let digest = footer[40..]
+    let digest = footer[48..]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
@@ -161,6 +164,7 @@ fn unpack(cache: &Path) -> io::Result<PathBuf> {
             && destination.join("server.cjs").is_file()
             && destination.join("git/cmd/git.exe").is_file()
             && destination.join("node.exe").is_file()
+            && destination.join("java.zip").is_file()
     };
     if complete() {
         return Ok(destination);
@@ -180,8 +184,12 @@ fn unpack(cache: &Path) -> io::Result<PathBuf> {
     let mut git = zip::ZipArchive::new(io::Cursor::new(archive))?;
     git.extract(root.join("git"))?;
     io::copy(
-        &mut source.take(backend_length),
+        &mut (&mut source).take(backend_length),
         &mut fs::File::create(root.join("server.cjs"))?,
+    )?;
+    io::copy(
+        &mut source.take(java_length),
+        &mut fs::File::create(root.join("java.zip"))?,
     )?;
     fs::write(root.join("ready"), [])?;
     match fs::rename(root, &destination) {

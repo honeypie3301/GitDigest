@@ -34,6 +34,21 @@ try {
   await rename(temp, archive);
 }
 await verifyGit(archive);
+const javaRuntime = path.join(payload, 'java-runtime');
+const javaClasses = path.join(payload, 'java-classes');
+await mkdir(javaClasses, { recursive: true });
+if (!await access(path.join(javaRuntime, 'bin/java.exe')).then(() => true, () => false)) {
+  execFileSync('jlink.exe', [
+    '--add-modules', 'java.base,java.logging',
+    '--strip-debug', '--no-header-files', '--no-man-pages', '--output', javaRuntime,
+  ], { stdio: 'inherit', windowsHide: true });
+}
+const cfrJar = path.join(project, 'bin/cfr.jar');
+execFileSync('javac.exe', ['--release', '11', '-cp', cfrJar, '-d', javaClasses, path.join(project, 'bin/GitDigestCfr.java')], { stdio: 'inherit', windowsHide: true });
+execFileSync('jar.exe', ['--create', '--file', path.join(javaRuntime, 'GitDigestCfr.jar'), '-C', javaClasses, '.'], { stdio: 'inherit', windowsHide: true });
+await cp(cfrJar, path.join(javaRuntime, 'cfr.jar'));
+await cp(path.join(project, 'bin/CFR-LICENSE.txt'), path.join(javaRuntime, 'CFR-LICENSE.txt'));
+execFileSync('tar.exe', ['--format', 'zip', '-cf', path.join(payload, 'java.zip'), '-C', javaRuntime, '.'], { stdio: 'inherit', windowsHide: true });
 await Promise.all([
   cp(archive, path.join(payload, 'mingit.zip')),
   pipeline(createReadStream(process.execPath), createGzip({ level: 3 }), createWriteStream(path.join(payload, 'node.exe.gz'))),
@@ -79,9 +94,9 @@ if (!args.includes('--no-installer')) {
 async function packageExe(source, destination) {
   await cp(source, destination);
   const digest = createHash('sha256');
-  const footer = Buffer.alloc(72);
-  footer.write('GITDIGEST-PACK1\0', 0, 'ascii');
-  const files = ['node.exe.gz', 'mingit.zip', 'server.cjs'];
+  const footer = Buffer.alloc(80);
+  footer.write('GITDIGEST-PACK2\0', 0, 'ascii');
+  const files = ['node.exe.gz', 'mingit.zip', 'server.cjs', 'java.zip'];
   for (const [index, file] of files.entries()) {
     let length = 0;
     for await (const chunk of createReadStream(path.join(payload, file), { highWaterMark: 1024 * 1024 })) {
@@ -91,7 +106,7 @@ async function packageExe(source, destination) {
     }
     footer.writeBigUInt64LE(BigInt(length), 16 + index * 8);
   }
-  digest.digest().copy(footer, 40);
+  digest.digest().copy(footer, 48);
   await appendFile(destination, footer);
 }
 

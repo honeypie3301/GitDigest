@@ -15,13 +15,17 @@ A high-performance codebase ingestion tool designed to convert any Git repositor
 
 ## Windows Desktop App
 
+Enable **Decompile .class** for offline Java source reconstruction with bundled CFR. To restore names, choose a matching ProGuard/R8 `mapping.txt` file while decompilation is enabled. The map must match the exact build and namespace. CFR can make some obfuscated code readable, but original names that are absent from both the class and the mapping cannot be recovered. Classes are analyzed individually, so some results may need their original dependencies for recompilation.
+
+The desktop bundles a Java runtime and loads it only when needed. The local Node server uses a JDK with Java source-file execution, and the Docker worker bundles a compiled CFR launcher. The static browser has no JVM and identifies class files without attempting source reconstruction.
+
 Run `GitDigest-Windows-x64-Setup.exe` to install GitDigest for your Windows account, or double-click the portable `GitDigest.exe` to run it from its current folder. Both use Windows' WebView2 runtime. Setup provisions WebView2 if needed. The portable executable requires a PC with WebView2 already available, as on Windows 11.
 
 Paste a GitHub URL or use **Choose folder** or **Choose file**, then click **Ingest**. The Rust engine handles ordinary local inputs entirely on your PC. The bundled GitHub engine and Java class decompiler are extracted to the current user's app data when first needed, then reused. For private repos, provide a GitHub token with access to the repo.
 
 The desktop app has no per-minute ingestion cap. If GitHub's REST API quota is exhausted, ingestion falls back to a shallow Git clone. GitHub can still restrict access to its own services.
 
-To build both packages on Windows, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and use 64-bit Node.js 22 or newer. Run `npm ci` and `npm run build:desktop`. The executables are written to `build/desktop-rust`. The previous Electron build remains available through `npm run build:desktop:electron` for comparison.
+To build both packages on Windows, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), 64-bit Node.js 22 or newer, and a 64-bit JDK 21 with `javac`, `jar`, and `jlink` on PATH. Run `npm ci` and `npm run build:desktop`. The executables are written to `build/desktop-rust`. The previous Electron build remains available through `npm run build:desktop:electron` for comparison.
 
 ## Running Locally
 
