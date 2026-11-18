@@ -1,8 +1,9 @@
+import { downloadBlob } from '../services/download';
 import React, { useState, useMemo, useEffect } from 'react';
 import { Copy, Check, Download, FolderTree, FileText, BarChart3, Hash, Cpu, XCircle, Timer, AlertCircle, FileArchive, Layers, FolderArchive } from 'lucide-react';
 import { IngestResponse } from '../types';
 import { IngestionTimer, formatDuration } from './IngestionTimer';
-import { desktopDownloadBlob, fullDigestSection } from '../services/digestExport';
+import { desktopDownloadBlob, fullDigestSection, digestByteSize } from '../services/digestExport';
 import { splitDigestSafely, downloadSplitPartsAsZip, SplitPart } from '../services/textSplitter';
 import { downloadIndividualFilesAsZip, extractIndividualFiles } from '../services/zipExporter';
 import { getSavedMaxOutputSize } from '../services/ingest';
@@ -35,6 +36,8 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
   onCancel,
 }) => {
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
+  const [exportInfo, setExportInfo] = useState('');
+  const [exportBytes, setExportBytes] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSplittingDownload, setIsSplittingDownload] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
@@ -110,8 +113,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
     if (!result) return null;
     const maxOutputMb = getSavedMaxOutputSize();
     const maxOutputBytes = maxOutputMb * 1024 * 1024;
-    // Lightweight estimation based on character count / content length to avoid main-thread freeze
-    const totalLength = (result.total_chars ?? 0) || ((result.summary?.length ?? 0) + (result.tree?.length ?? 0) + (result.content?.length ?? 0));
+    const totalLength = digestByteSize(result) ?? 0;
     const estimatedParts = Math.max(1, Math.ceil(totalLength / maxOutputBytes));
     return {
       isSplit: estimatedParts > 1,
@@ -121,19 +123,16 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
   }, [result]);
   useEffect(() => {
     setActionError(null);
+    setExportInfo('');
+    setExportBytes(null);
     setBreakdown(null);
   }, [result]);
 
-  const estimatedBytes = useMemo(() => {
-    if (!result) return 0;
-    if (result.content_chars) return result.content_chars;
-    if (result.total_chars) return result.total_chars;
-    return result.content ? result.content.length : 0;
-  }, [result]);
+  const estimatedBytes = useMemo(() => result ? (exportBytes ?? digestByteSize(result)) : null, [result, exportBytes]);
 
   const summaryWithFileSize = useMemo(() => {
     if (!result?.summary) return '';
-    const formattedSize = formatBytes(estimatedBytes);
+    const formattedSize = estimatedBytes === null ? 'Available after export' : formatBytes(estimatedBytes);
     const modeLabel = result.output_format === 'zip' ? 'Individual Files (.zip)' : 'Text Digest (.txt)';
     const lines = result.summary.split('\n');
 
@@ -196,7 +195,12 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
     try {
       setIsSplittingDownload(true);
       const stored = await desktopDownloadBlob(result, maxOutputBytes);
-      const parts = stored ? [] : splitDigestSafely(await fullDigestSection(result, 'all'), maxOutputBytes, filename);
+      setActionError(null);
+      const full = stored ? null : await fullDigestSection(result, 'all');
+      setExportBytes(stored?.size ?? new Blob([full!]).size);
+      const parts = stored ? [] : splitDigestSafely(full!, maxOutputBytes, filename);
+      const oversized = parts.filter(part => part.byteLength > maxOutputBytes).length;
+      setExportInfo(oversized ? `${oversized} output part(s) exceed the ${maxOutputMb} MB target because individual files or lines are kept intact.` : '');
 
       if (parts.length > 1) {
         // Output text file size exceeds user threshold: split into safe parts inside a zip package
@@ -205,14 +209,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
       } else {
         // Single file within max output threshold
         const blob = stored ?? new Blob([parts[0].content], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = stored ? filename : parts[0].filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
+        downloadBlob(blob, stored ? filename : parts[0].filename);
       }
     } catch (err: any) {
       setActionError(err.message || 'Download failed');
@@ -280,6 +277,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
   return (
     <div className="w-full max-w-6xl 2xl:max-w-7xl mx-auto mt-8 px-2 sm:px-4 space-y-6">
       {actionError && <p role="alert" className="text-red-300">{actionError}</p>}
+      {exportInfo && <p role="status" className="text-sm text-amber-300">{exportInfo}</p>}
       {/* Quick Metrics Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="bg-[#161b22] border-2 border-[#30363d] rounded-xl p-3 flex items-center gap-2.5 shadow-[2px_2px_0_0_#000000]">
@@ -360,7 +358,7 @@ export const ResultSection: React.FC<ResultSectionProps> = React.memo(({
         <div className="bg-sky-500/10 border-2 border-sky-500/40 rounded-xl px-4 py-2.5 text-xs font-mono text-sky-200 shadow-[2px_2px_0_0_#000000] flex items-center gap-2.5">
           <Layers className="w-4 h-4 text-sky-400 shrink-0" />
           <div>
-            <strong className="text-sky-300">Auto-Split Active:</strong> Total digest exceeds your configured <strong>{splitInfo.maxOutputMb} MB</strong> limit. Content will be safely partitioned into approximately <strong>{splitInfo.estimatedParts} text files</strong> (packaged as a .zip) along file boundaries without truncating code.
+            <strong className="text-sky-300">Auto-Split Active:</strong> Total digest exceeds your configured <strong>{splitInfo.maxOutputMb} MB</strong> limit. Content will be safely partitioned into approximately <strong>{splitInfo.estimatedParts} text files</strong> (packaged as a .zip) along file boundaries without truncating code. A single large file may exceed the target size.
           </div>
         </div>
       )}

@@ -1,4 +1,5 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess, safeStorage } = require('electron');
+const fs = require('node:fs/promises');
 const { randomBytes } = require('node:crypto');
 const path = require('node:path');
 
@@ -43,6 +44,38 @@ async function start() {
     webPreferences: { preload: path.join(appPath, 'preload.cjs') },
   });
   const contents = mainWindow.webContents;
+  const downloads = new Set();
+  const trusted = (event) => event.senderFrame === contents.mainFrame && new URL(event.senderFrame.url).origin === origin;
+  const credentialFile = path.join(app.getPath('userData'), 'github-token.enc');
+  ipcMain.handle('read-token', async event => {
+    if (!trusted(event)) throw new Error('Untrusted sender');
+    try { return safeStorage.decryptString(await fs.readFile(credentialFile)); }
+    catch (error) { if (error.code === 'ENOENT') return ''; throw error; }
+  });
+  ipcMain.handle('save-token', async (event, token) => {
+    if (!trusted(event) || typeof token !== 'string' || token.length > 2560) throw new Error('Invalid credential request');
+    if (!token) { await fs.rm(credentialFile, { force: true }); return; }
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('Secure storage unavailable');
+    await fs.writeFile(credentialFile, safeStorage.encryptString(token));
+  });
+  ipcMain.handle('open-external', async (event, url) => {
+    if (!trusted(event) || new URL(url).protocol !== 'https:') throw new Error('Invalid external link');
+    await shell.openExternal(url);
+  });
+  ipcMain.handle('reveal-download', (event, file) => {
+    if (!trusted(event) || !downloads.has(file)) throw new Error('Unknown download');
+    shell.showItemInFolder(file);
+  });
+  contents.session.on('will-download', (_event, item, source) => {
+    if (source !== contents) return;
+    item.once('done', (_event, state) => {
+      if (mainWindow.isDestroyed()) return;
+      const success = state === 'completed';
+      const savedPath = success ? item.getSavePath() : null;
+      if (savedPath) downloads.add(savedPath);
+      contents.send('download-finished', { success, path: savedPath });
+    });
+  });
   contents.session.webRequest.onBeforeSendHeaders({ urls: [`${origin}/*`] }, (details, callback) => {
     if (details.webContentsId === contents.id && new URL(details.url).origin === origin) {
       details.requestHeaders['X-GitDigest-Desktop'] = key;

@@ -163,7 +163,7 @@ export default function App() {
         return;
       }
 
-      setSavedToken(input);
+      await setSavedToken(input);
       if (authRes.user) setCachedAuth(input, authRes.user);
       setIsLocked(false);
       setAuthError(null);
@@ -181,8 +181,9 @@ export default function App() {
     }
   };
 
-  const handleManualLock = () => {
-    setSavedToken('');
+  const handleManualLock = async () => {
+    try { await setSavedToken(''); }
+    catch { setAuthError('Unable to remove saved credentials.'); return; }
     clearAuthCache();
     setTokenStatus({ configured: false, source: 'none', user: null });
     setIsLocked(true);

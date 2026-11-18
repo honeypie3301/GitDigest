@@ -246,7 +246,9 @@ export async function ingestViaGitHubApi(
     throw new Error(`Failed to fetch file tree for "${owner}/${repo}" (${treeRes.status})${msg ? `: ${msg}` : ''}.`);
   }
   const treeData = await treeRes.json();
-  // If GitHub truncates the tree (e.g. >100,000 files or 7MB tree response), proceed with the files that were returned instead of crashing!
+  if (treeData.truncated) {
+    throw new Error('GitHub returned a truncated file tree. Use the desktop app or server to ingest the complete repository.');
+  }
   const rawTree: Array<{ path: string; mode: string; type: string; sha: string; size?: number }> =
     treeData.tree || [];
 
@@ -258,6 +260,9 @@ export async function ingestViaGitHubApi(
     if (!req.decompile_classes && item.path.toLowerCase().endsWith('.class')) return false;
     return true;
   });
+  if (fileNodes.length > 1000) {
+    throw new Error('Repository is too large for browser ingestion (over 1,000 matching files). Use the desktop app or server.');
+  }
 
   const treePaths = rawTree
     .filter((item) => isIncluded(item.path))

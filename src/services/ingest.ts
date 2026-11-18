@@ -1,9 +1,9 @@
+import { getCredential, saveCredential } from './credentials';
 import { IngestRequest, IngestResponse, TokenStatus, GitHubUser } from '../types';
 import { ingestViaGitHubApi, verifyGitHubToken } from './githubApi';
 import { waitForWorkerJob, type WorkerJob } from './workerJobs';
 import { readApiResponse } from './apiResponse';
 
-const SAVED_PAT_KEY = 'gitingest_custom_pat';
 const AUTO_INJECT_KEY = 'gitingest_auto_inject_pat';
 const PATTERN_TYPE_KEY = 'gitingest_pattern_type';
 const PATTERN_VALUE_KEY = 'gitingest_pattern_val';
@@ -49,27 +49,15 @@ export function setCachedTokenStatus(status: TokenStatus): void {
   } catch {}
 }
 
+let authCache: AuthCache | null = null;
 export function getCachedAuth(token: string): GitHubUser | null {
-  try {
-    const raw = localStorage.getItem(AUTH_CACHE_KEY);
-    if (!raw) return null;
-    const cache: AuthCache = JSON.parse(raw);
-    if (cache.token !== token) return null;
-    if (Date.now() - cache.ts > AUTH_CACHE_TTL_MS) return null;
-    return cache.user;
-  } catch {
-    return null;
-  }
+  return authCache?.token === token && Date.now() - authCache.ts < AUTH_CACHE_TTL_MS ? authCache.user : null;
 }
-
 export function setCachedAuth(token: string, user: GitHubUser): void {
-  try {
-    const cache: AuthCache = { token, user, ts: Date.now() };
-    localStorage.setItem(AUTH_CACHE_KEY, JSON.stringify(cache));
-  } catch {}
+  authCache = { token, user, ts: Date.now() };
 }
-
 export function clearAuthCache(): void {
+  authCache = null;
   try {
     localStorage.removeItem(AUTH_CACHE_KEY);
     localStorage.removeItem(STATUS_CACHE_KEY);
@@ -109,25 +97,8 @@ export function saveOutputFormat(format: 'text' | 'zip'): void {
   }
 }
 
-export function getSavedToken(): string {
-  try {
-    return localStorage.getItem(SAVED_PAT_KEY) || '';
-  } catch {
-    return '';
-  }
-}
-
-export function setSavedToken(token: string): void {
-  try {
-    if (token) {
-      localStorage.setItem(SAVED_PAT_KEY, token.trim());
-    } else {
-      localStorage.removeItem(SAVED_PAT_KEY);
-    }
-  } catch (e) {
-    console.error('Failed to save token to localStorage', e);
-  }
-}
+export function getSavedToken(): string { return getCredential(); }
+export async function setSavedToken(token: string): Promise<void> { await saveCredential(token); }
 
 export function getAutoInjectToken(): boolean {
   try {
@@ -233,14 +204,6 @@ export async function verifyAuthWithServer(input: string): Promise<{ success: bo
     return { success: true, user: ownerUser };
   }
 
-  // 2. Client-side GitHub PAT verification (works on GitHub Pages & offline)
-  try {
-    const ghUser = await verifyGitHubToken(clean);
-    if (ghUser) {
-      return { success: true, user: ghUser };
-    }
-  } catch {}
-
   // 3. Fallback check against backend API if available
   const isStaticHosting = typeof window !== 'undefined' && (
     window.location.hostname.includes('github.io') ||
@@ -265,12 +228,16 @@ export async function verifyAuthWithServer(input: string): Promise<{ success: bo
         }
         serverError = data.error || 'Authentication rejected by server.';
       } else {
-        const data = await res.json().catch(() => null);
+        const data = await readApiResponse(res, 'Unable to verify credentials');
         serverError = data?.error || `Server responded with ${res.status}`;
       }
     } catch (err: any) {
       serverError = err.message || 'Server unreachable';
     }
+  }
+
+  if (serverError && !serverError.includes('Failed to fetch') && !serverError.includes('unreachable')) {
+    return { success: false, error: serverError };
   }
 
   // 3. Client-side fallback via GitHub API if server failed or rejected with network error
@@ -281,11 +248,6 @@ export async function verifyAuthWithServer(input: string): Promise<{ success: bo
     }
   } catch {
     // ignore client fallback error
-  }
-
-  // 4. Return helpful diagnostic message
-  if (serverError && !serverError.includes('Failed to fetch') && !serverError.includes('unreachable')) {
-    return { success: false, error: serverError };
   }
 
   return {
@@ -388,6 +350,14 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
     headers.Authorization = `Bearer ${tokenToUse}`;
   }
 
+  // GitHub Pages has no ingestion endpoint. Do not treat its HTML 404 as a server error.
+  if (typeof window !== 'undefined' && !window.gitDigestDesktop
+    && (window.location.hostname.endsWith('.github.io') || window.location.protocol === 'file:')) {
+    if (isLocalPath(request.input_text)) throw new Error('Local paths require the desktop app or local server.');
+    const result = await ingestViaGitHubApi(payload, tokenToUse, signal);
+    return { ...result, output_format: result.output_format || payload.output_format };
+  }
+
   try {
     const response = await fetchApi('/api/ingest', {
       method: 'POST',
@@ -399,7 +369,7 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
       signal,
     });
     const contentType = response.headers.get('content-type') || '';
-    backendResponded = contentType.includes('application/json') || contentType.includes('application/x-ndjson');
+    backendResponded = true;
 
     if (response.ok) {
       if (contentType.includes('application/x-ndjson') && response.body) {
@@ -470,16 +440,10 @@ export async function performIngest(request: IngestRequest, signal?: AbortSignal
       throw new Error(data.error || 'GitHub API rate limit exceeded. Please retry later.');
     }
 
-    if (response.status >= 500) {
-      console.warn('Server failed or timed out on large repository. Seamlessly falling back to direct ingestion...');
-    } else if (response.headers.get('content-type')?.includes('application/json')) {
-      const errData = await readApiResponse(response, 'Unable to ingest repository');
-      throw new Error(errData.error || errData.message || 'Ingestion failed on server');
-    }
-
-    console.warn('Backend API returned non-200. Falling back to client-side GitHub REST API...');
+    const errData = await readApiResponse(response, 'Unable to ingest repository');
+    throw new Error(errData.error || errData.message || `Ingestion failed (HTTP ${response.status})`);
   } catch (err: any) {
-    if (workerStarted || serverError || (typeof window !== 'undefined' && window.gitDigestDesktop)) throw err;
+    if (backendResponded || workerStarted || serverError || (typeof window !== 'undefined' && window.gitDigestDesktop)) throw err;
     if (signal?.aborted || err.name === 'AbortError') {
       throw err;
     }

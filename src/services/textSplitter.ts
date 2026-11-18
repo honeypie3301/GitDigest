@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { downloadBlob } from './download';
 
 export interface SplitPart {
   partIndex: number;
@@ -22,6 +23,7 @@ export function splitDigestSafely(
   baseFilename: string
 ): SplitPart[] {
   const encoder = new TextEncoder();
+  if (!Number.isFinite(maxBytes) || maxBytes <= 0) throw new Error('Output size must be greater than zero.');
   const totalByteLength = encoder.encode(text).length;
 
   if (totalByteLength <= maxBytes) {
@@ -47,20 +49,23 @@ export function splitDigestSafely(
 
     let currentChunk = headerPrefix;
     let currentBytes = encoder.encode(currentChunk).length;
+    let currentFiles = 0;
 
     for (let i = 0; i < rawFileBlocks.length; i++) {
       const blockText = fileDelimiter + rawFileBlocks[i];
       const blockBytes = encoder.encode(blockText).length;
 
       // If adding this file block exceeds maxBytes and currentChunk already has content
-      if (currentBytes + blockBytes > maxBytes && currentChunk.length > 0) {
+      if (currentBytes + blockBytes > maxBytes && currentFiles > 0) {
         parts.push(currentChunk);
         // Start next chunk with header reminder
         currentChunk = `[Continued digest part - Header & structure repeated]\n${headerPrefix.trimEnd()}\n\n${blockText}`;
         currentBytes = encoder.encode(currentChunk).length;
+        currentFiles = 1;
       } else {
         currentChunk += blockText;
         currentBytes += blockBytes;
+        currentFiles++;
       }
     }
 
@@ -129,12 +134,5 @@ export async function downloadSplitPartsAsZip(
     compressionOptions: { level: 6 },
   });
 
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = zipFilename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, zipFilename);
 }

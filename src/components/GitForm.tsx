@@ -5,6 +5,7 @@ import { getSavedPatterns, savePatterns, getSavedToken, getSavedDecompileClasses
 import { fetchUserRepos, RepoSummary } from '../services/githubApi';
 import { IngestionTimer } from './IngestionTimer';
 import { LiveIngestionView } from './LiveIngestionView';
+import { IngestionPresets } from './IngestionPresets';
 import {
   getRecentIngests,
   addRecentIngest,
@@ -527,6 +528,15 @@ export const GitForm: React.FC<GitFormProps> = React.memo(({
                 </button>
               </div>
             )}
+
+            <IngestionPresets disabled={isLoading} settings={{ patternType, pattern, maxFileSize, maxOutputSize, decompileClasses, outputFormat }} onApply={preset => {
+              setPatternType(preset.patternType); setPattern(preset.pattern);
+              setMaxFileSize(preset.maxFileSize); setDisplaySize(String(preset.maxFileSize)); setSizeUnit('MB');
+              setMaxOutputSize(preset.maxOutputSize); setDisplayOutputSize(String(preset.maxOutputSize)); setOutputUnit('MB');
+              setDecompileClasses(preset.decompileClasses); setOutputFormat(preset.outputFormat);
+              savePatterns(preset.patternType, preset.pattern, preset.maxFileSize, preset.maxOutputSize);
+              saveDecompileClasses(preset.decompileClasses); saveOutputFormat(preset.outputFormat);
+            }} />
 
             {/* Advanced Settings Toggle */}
             <div className="pt-2 border-t-2 border-[#30363d]/70 flex items-center justify-between gap-2">

@@ -27,6 +27,12 @@ The desktop app has no per-minute ingestion cap. If GitHub's REST API quota is e
 
 To build both packages on Windows, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), 64-bit Node.js 22 or newer, and a 64-bit JDK 21 with `javac`, `jar`, and `jlink` on PATH. Run `npm ci` and `npm run build:desktop`. The executables are written to `build/desktop-rust`. The previous Electron build remains available through `npm run build:desktop:electron` for comparison.
 
+Alternatively, double-click `Build-EXE.bat`. It installs npm dependencies if missing, loads the project-local Rust environment when available, builds both executables, and opens the output folder. The first build requires internet access to download packaging tools.
+
+Download completion appears in a dismissible banner with the full saved path and **Open containing folder**. Source links open in your default browser. **Ingestion presets** save named combinations of filters, size limits, output format, and decompilation settings; they exclude tokens, repository paths, and mapping contents.
+
+The Rust desktop stores GitHub tokens in Windows Credential Manager. The Electron alternative encrypts them with Electron's OS-backed safe storage. Legacy plaintext tokens migrate on startup; browser tokens remain in memory only and clear on refresh. Authentication caches no longer persist tokens. ZIP exports preserve colliding filenames by adding numeric suffixes. Split size is a target: individual files and lines remain intact even when they exceed it.
+
 ## Running Locally
 
 ### Prerequisites

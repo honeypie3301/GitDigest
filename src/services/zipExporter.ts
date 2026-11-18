@@ -1,6 +1,7 @@
 import JSZip from 'jszip';
 import { IngestResponse } from '../types';
 import { fullDigestSection } from './digestExport';
+import { downloadBlob } from './download';
 
 export interface ExtractedFile {
   path: string;
@@ -53,7 +54,11 @@ export function extractIndividualFiles(result: IngestResponse): ExtractedFile[] 
  * - Converts decompiled java paths e.g. 'Class.class [Decompiled Java]' to 'Class.java'
  */
 export function normalizeZipPath(rawPath: string, source?: string): string {
-  let clean = rawPath.replace(/^[\\/]+/, '').trim();
+  let clean = rawPath.replace(/\\/g, '/').replace(/^\/+/, '').trim();
+  if (clean.split('/').some(part => part === '..') || /[:\x00-\x1f]/.test(clean)) {
+    throw new Error(`Unsafe ZIP file path: ${rawPath}`);
+  }
+  clean = clean.split('/').filter(part => part && part !== '.').join('/');
   if (clean.endsWith(' [Decompiled Java]')) {
     clean = clean.replace(/\.class\s*\[Decompiled Java\]$/i, '.java');
     // The class declaration can have a new name after applying a mapping.
@@ -63,6 +68,31 @@ export function normalizeZipPath(rawPath: string, source?: string): string {
     }
   }
   return clean;
+}
+
+export function buildIndividualFilesZip(files: ExtractedFile[], summary: string, tree: string): JSZip {
+  const zip = new JSZip();
+  const entries = files.map(file => ({ path: normalizeZipPath(file.path, file.text), text: file.text }));
+  const occupied = new Set<string>();
+  // Reserve all directories before adding files (including files named like a directory).
+  for (const entry of entries) {
+    const parts = entry.path.split('/');
+    for (let i = 1; i < parts.length; i++) occupied.add(parts.slice(0, i).join('/').toLowerCase());
+  }
+  const add = (name: string, text: string) => {
+    if (!name) return;
+    const dot = name.lastIndexOf('.') > name.lastIndexOf('/') ? name.lastIndexOf('.') : name.length;
+    let candidate = name;
+    for (let n = 2; occupied.has(candidate.toLowerCase()); n++) {
+      candidate = `${name.slice(0, dot)} (${n})${name.slice(dot)}`;
+    }
+    occupied.add(candidate.toLowerCase());
+    zip.file(candidate, text);
+  };
+  for (const entry of entries) add(entry.path, entry.text);
+  if (summary) add('SUMMARY.txt', summary);
+  if (tree) add('DIRECTORY_STRUCTURE.txt', tree);
+  return zip;
 }
 
 /**
@@ -94,27 +124,8 @@ export async function downloadIndividualFilesAsZip(
   const content = result.content_preview_truncated ? await fullDigestSection(result, 'content') : result.content;
   const tree = result.tree_preview_truncated ? await fullDigestSection(result, 'tree') : result.tree;
   const files = extractIndividualFiles({ ...result, content });
-  const zip = new JSZip();
-
-  // 1. Add SUMMARY and Directory Structure metadata files
-  if (result.summary) {
-    zip.file('SUMMARY.txt', result.summary);
-  }
-  if (tree) {
-    zip.file('DIRECTORY_STRUCTURE.txt', tree);
-  }
-
-  // 2. Add individual files preserving directory hierarchy
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const zipPath = normalizeZipPath(file.path, file.text);
-    if (zipPath) {
-      zip.file(zipPath, file.text);
-    }
-    if (onProgress && i % 10 === 0) {
-      onProgress(Math.round(((i + 1) / (files.length || 1)) * 50), zipPath);
-    }
-  }
+  const zip = buildIndividualFilesZip(files, result.summary, tree);
+  onProgress?.(50, 'Files packaged');
 
   // 3. Auto-detect optimal compression method (STORE on localhost, DEFLATE on cloud)
   const method = getBestCompressionMethod(preferredMethod);
@@ -139,12 +150,5 @@ export async function downloadIndividualFilesAsZip(
   const finalFilename = customZipName || `${repoSlug}${subSlug}_files.zip`;
 
   // 6. Trigger download
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = finalFilename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
+  downloadBlob(blob, finalFilename);
 }

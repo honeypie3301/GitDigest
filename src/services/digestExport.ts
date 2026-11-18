@@ -4,6 +4,15 @@ const desktopSections = new WeakMap<IngestResponse, { content: Blob; tree: Blob 
 const desktopArtifacts = new WeakMap<IngestResponse, { path: string; size: number; treeStart: number; contentStart: number }>();
 const DESKTOP_PREVIEW = 50_000;
 
+export function digestByteSize(result: IngestResponse): number | null {
+  const artifact = desktopArtifacts.get(result);
+  if (artifact) return artifact.size;
+  const local = desktopSections.get(result);
+  if (local) return new Blob([result.summary, '\n\n', local.tree, '\n\n', local.content]).size;
+  if (result.content_preview_truncated || result.tree_preview_truncated) return null;
+  return new Blob([result.summary, '\n\n', result.tree, '\n\n', result.content]).size;
+}
+
 function copyPreview(text: string) {
   if (text.length <= DESKTOP_PREVIEW) return text;
   // Copy the prefix so a V8 substring cannot keep the entire digest alive.

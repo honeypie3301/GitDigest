@@ -61,15 +61,17 @@ export const TokenModal: React.FC<TokenModalProps> = ({ isOpen, onClose, onToken
     }
   };
 
-  const handleSave = () => {
-    setSavedToken(tokenInput.trim());
+  const handleSave = async () => {
+    try { await setSavedToken(tokenInput.trim()); }
+    catch { setVerifyError('Unable to save token securely. Please try again.'); return; }
     setAutoInjectToken(autoInject);
     onTokenUpdated();
     onClose();
   };
 
-  const handleClear = () => {
-    setSavedToken('');
+  const handleClear = async () => {
+    try { await setSavedToken(''); }
+    catch { setVerifyError('Unable to remove saved token. Please try again.'); return; }
     setTokenInput('');
     setVerifiedUser(null);
     setVerifyError(null);
@@ -205,6 +207,7 @@ export const TokenModal: React.FC<TokenModalProps> = ({ isOpen, onClose, onToken
               )}
 
               {/* Auto-inject */}
+              <p className="text-[11px] text-gray-400">{window.gitDigestDesktop ? 'Tokens are protected by your Windows account.' : 'Tokens are kept in memory for this page session and cleared on refresh.'}</p>
               <div className="flex items-center justify-between pt-1">
                 <label className="flex items-center gap-2 cursor-pointer select-none">
                   <input
