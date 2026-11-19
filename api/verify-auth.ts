@@ -4,7 +4,7 @@ const OWNER_GITHUB_LOGIN = (process.env.OWNER_GITHUB_LOGIN || 'honeypie3301').to
 const OWNER_GITHUB_ID = process.env.OWNER_GITHUB_ID ? Number(process.env.OWNER_GITHUB_ID) : 84184414;
 const OWNER_ACCESS_KEY = (process.env.OWNER_ACCESS_KEY || process.env.OWNER_PASSPHRASE || 'honeypie3301-84184414').trim();
 
-const OWNER_REPO_NAME = (process.env.OWNER_REPO_NAME || 'Personal-Gitingest').trim();
+const OWNER_REPO_NAME = (process.env.OWNER_REPO_NAME || 'GitDigest').trim();
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -87,7 +87,7 @@ export default async function handler(req: any, res: any) {
         // Fallback to candidate list
       }
 
-      const candidateRepos = Array.from(new Set([OWNER_REPO_NAME, 'Personal-Gitingest', 'Gitingest', 'gitingest']));
+      const candidateRepos = Array.from(new Set([OWNER_REPO_NAME, 'GitDigest', 'Gitingest', 'gitingest']));
       for (const repoName of candidateRepos) {
         try {
           const repoCheck = await fetch(`https://api.github.com/repos/${OWNER_GITHUB_LOGIN}/${repoName}`, {

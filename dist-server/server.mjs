@@ -630,7 +630,7 @@ function formatTokenCount(tokens) {
 var OWNER_GITHUB_LOGIN = (process.env.OWNER_GITHUB_LOGIN || "honeypie3301").toLowerCase();
 var OWNER_GITHUB_ID = process.env.OWNER_GITHUB_ID ? Number(process.env.OWNER_GITHUB_ID) : 84184414;
 var OWNER_ACCESS_KEY = (process.env.OWNER_ACCESS_KEY || process.env.OWNER_PASSPHRASE || "honeypie3301-84184414").trim();
-var OWNER_REPO_NAME = (process.env.OWNER_REPO_NAME || "Personal-Gitingest").trim();
+var OWNER_REPO_NAME = (process.env.OWNER_REPO_NAME || "GitDigest").trim();
 var tokenCache = /* @__PURE__ */ new Map();
 var TOKEN_CACHE_TTL = 10 * 60 * 1e3;
 var rateLimits = /* @__PURE__ */ new Map();
@@ -722,7 +722,7 @@ async function verifyOwnerCredentials(tokenOrKey) {
         }
       } catch {
       }
-      const candidateRepos = Array.from(/* @__PURE__ */ new Set([OWNER_REPO_NAME, "Personal-Gitingest", "Gitingest", "gitingest"]));
+      const candidateRepos = Array.from(/* @__PURE__ */ new Set([OWNER_REPO_NAME, "GitDigest", "Gitingest", "gitingest"]));
       for (const repoName of candidateRepos) {
         try {
           const repoCheck = await fetch(`https://api.github.com/repos/${OWNER_GITHUB_LOGIN}/${repoName}`, {
